@@ -7,18 +7,20 @@
 <meta name="description" content="Fazenda + exército do Docão: planta, rouba o milho do vizinho e ataca o chiqueiro dos amigos.">
 <meta name="theme-color" content="#7fc263">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐷</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800;900&display=swap">
 <link rel="stylesheet" href="./style.css">
 <script type="importmap">{ "imports": { "three": "./vendor/three.module.js" } }</script>
 </head>
 <body>
-<div id="world"></div>
+<div id="world"></div><div id="vignette"></div>
 
 <header id="hud" class="hidden">
   <div class="who"><span class="avatar">🐷</span><div><b id="nick">—</b><small id="lvl">Celeiro 1</small></div></div>
   <div class="res">
-    <span class="chip" title="Grãos"><i>🌾</i><b id="r-grains">0</b><small id="c-grains"></small></span>
-    <span class="chip" title="Ração"><i>🥣</i><b id="r-ration">0</b><small id="c-ration"></small></span>
-    <span class="chip" title="Tábuas"><i>🪵</i><b id="r-planks">0</b><small id="c-planks"></small></span>
+    <span class="chip res-grains" title="Grãos"><i>🌾</i><b id="r-grains">0</b><small id="c-grains"></small><u class="cap"><s id="f-grains"></s></u></span>
+    <span class="chip res-ration" title="Ração"><i>🥣</i><b id="r-ration">0</b><small id="c-ration"></small><u class="cap"><s id="f-ration"></s></u></span>
+    <span class="chip res-planks" title="Tábuas"><i>🪵</i><b id="r-planks">0</b><small id="c-planks"></small><u class="cap"><s id="f-planks"></s></u></span>
     <span class="chip slim" title="Medalhas de Lama"><i>🏅</i><b id="r-trophies">0</b></span>
     <span class="chip slim" title="Docoins (conta do Shooter)"><i>🪙</i><b id="r-coins">0</b></span>
   </div>
@@ -38,16 +40,16 @@
 <section id="sheet" class="hidden"><div class="grip"></div><button class="x" id="sheet-x" aria-label="Fechar">✕</button><div id="sheet-body"></div></section>
 
 <div id="battle-hud" class="hidden">
-  <div class="top"><div><b id="b-name">—</b><small id="b-sub"></small></div><div class="score"><span id="b-stars">☆☆☆</span><b id="b-pct">0%</b></div><div class="timer" id="b-time">3:00</div></div>
+  <div class="top"><div><b id="b-name">—</b><small id="b-sub"></small></div><div class="score"><span id="b-stars">☆☆☆</span><b id="b-pct">0%</b><u class="cap"><s id="b-bar"></s></u></div><div class="timer" id="b-time">⏱ 3:00</div></div>
   <div class="bottom"><div id="b-units"></div><div class="btns"><button id="b-speed">1×</button><button id="b-end" class="danger">Encerrar</button></div></div>
   <div class="hint" id="b-hint">Escolha a tropa e toque no chão fora da área vermelha</div>
 </div>
 
 <div id="login" class="overlay">
   <div class="card">
-    <div class="logo">🐷🌽</div>
+    <div class="hero"><div class="sun"></div><div class="badge"><span class="pig">🐷</span><span class="hat">👒</span></div><span class="crop c1">🌽</span><span class="crop c2">🥕</span><span class="crop c3">🎃</span></div>
     <h1>Docão Fazendão</h1>
-    <p class="sub">Guerra do Chiqueiro</p>
+    <p class="sub"><span>Guerra do Chiqueiro</span></p>
     <form id="login-form">
       <input id="l-nick" autocomplete="username" placeholder="Apelido" maxlength="16" required>
       <input id="l-pass" type="password" autocomplete="current-password" placeholder="Senha" maxlength="128" required>

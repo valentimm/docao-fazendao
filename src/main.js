@@ -60,7 +60,7 @@ function local() { return S ? settle(JSON.parse(JSON.stringify(S)), now()) : nul
 function refresh() {
   const s = local(); if (!s || !ME) return; const c = caps(s);
   $('#nick').textContent = ME.nick; $('#lvl').textContent = `Celeiro ${celeiroLvl(s)} · 🐷 ${armySpace(s, false)}/${housing(s)}`;
-  for (const r of ['grains', 'ration', 'planks']) { $('#r-' + r).textContent = n0(s.res[r]); $('#c-' + r).textContent = '/' + n0(c[r]); }
+  for (const r of ['grains', 'ration', 'planks']) { $('#r-' + r).textContent = n0(s.res[r]); $('#c-' + r).textContent = '/' + n0(c[r]); const f = $('#f-' + r), k = Math.min(1, s.res[r] / c[r]); f.style.width = (k * 100).toFixed(1) + '%'; f.classList.toggle('full', k >= 0.98); }
   $('#r-trophies').textContent = n0(s.trophies); $('#r-coins').textContent = n0(ME.coins);
   if (mode === 'home' || mode === 'place') { world.sync(s.buildings, now()); icons(s); world.setCampTroops(s.army, s.buildings); }
   if (sheetKind) renderSheet(sheetKind, true);
@@ -89,7 +89,8 @@ async function act(a, b) {
   const r = await api('/api/farm/act', a);
   if (!r.ok) { toast(r.error || 'Não deu', 'bad'); return r; }
   absorb(r); if (r.msg) toast(r.msg, 'good');
-  if (r.gain && b) for (const k in r.gain) float(`+${r.gain[k]} ${k === 'grains' ? '🌾' : k === 'planks' ? '🪵' : '🥣'}`, b);
+  if (r.gain && b) { for (const k in r.gain) float(`+${n0(r.gain[k])} ${k === 'grains' ? '🌾' : k === 'planks' ? '🪵' : '🥣'}`, b); const n = BUILDINGS[b.type].size, k0 = Object.keys(r.gain)[0]; world.burst(b.x + n / 2, b.y + n / 2, k0 === 'grains' ? '#ffd23f' : k0 === 'planks' ? '#c08850' : '#ffb38a', 12, n > 2 ? 2.2 : 1); }
+  else if (b && (a.type === 'build' || a.type === 'upgrade' || a.type === 'move' || a.type === 'plant')) { const n = BUILDINGS[b.type || a.building].size; world.puff(b.x + n / 2, b.y + n / 2, '#fff6d8', n * 0.6); }
   return r;
 }
 
@@ -306,7 +307,7 @@ async function confirmPlace() {
   const p = place; if (!p || p.busy) return; if (!canPlace(local(), p.type, p.x, p.y, p.id)) return toast('Não cabe aí (vermelho)', 'bad');
   p.busy = true; const x = p.x, y = p.y; // trava a posição: o mouse pode andar enquanto o servidor responde
   const r = p.id ? await act({ type: 'move', id: p.id, x, y }) : await act({ type: 'build', building: p.type, x, y });
-  p.busy = false; if (r.ok) endPlace();
+  p.busy = false; if (r.ok) { const n = BUILDINGS[p.type].size; world.puff(x + n / 2, y + n / 2, '#fff6d8', n * 0.7); world.burst(x + n / 2, y + n / 2, '#d8b77a', 10, 0.4); endPlace(); }
 }
 window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && place) endPlace(); });
 function endPlace() { if (place && place.id) world.hideBuilding(place.id, false); place = null; mode = 'home'; world.setGhost(null); banner(''); $('#dock').classList.remove('hidden'); refresh(); }
@@ -325,7 +326,7 @@ async function trySteal(b) {
   const fb = visitFarm.buildings.find((x) => x.id === b.id); if (!fb.crop) return toast('Canteiro vazio');
   if (now() < fb.readyAt) return toast(`Ainda não está pronto (${fmtDur((fb.readyAt - now()) / 1000)})`);
   const r = await api('/api/farm/steal', { who: visitFarm.who, plot: b.id }); if (!r.ok) return toast(r.error, 'bad');
-  absorb(r); fb.mine = true; if (!r.bitten) fb.stolenPct += STEAL.pct; toast(r.msg, r.bitten ? 'bad' : 'good'); float(r.bitten ? '🐶 AU!' : `+${r.amount} 🌾`, fb); visitIcons();
+  absorb(r); fb.mine = true; if (!r.bitten) fb.stolenPct += STEAL.pct; toast(r.msg, r.bitten ? 'bad' : 'good'); float(r.bitten ? '🐶 AU!' : `+${r.amount} 🌾`, fb); visitIcons(); world.burst(fb.x + 1, fb.y + 1, r.bitten ? '#c0392b' : '#ffd23f', 10, 1);
 }
 function goHome() {
   mode = 'home'; visitFarm = null; battle = null; place = null; banner(''); world.setGhost(null); world.setNoDeploy(null); world.clear(); world.docao.visible = true; world.campVisible(true); world.setSign('Proibido roubar milho, Paulo');
@@ -358,7 +359,7 @@ function deployAt(p) {
 }
 function battleHud() {
   const b = battle, r = b.bt.result(); $('#b-pct').textContent = r.pct + '%'; $('#b-stars').textContent = '★'.repeat(r.stars) + '☆'.repeat(3 - r.stars);
-  const left = Math.max(0, ATTACK.maxTicks - b.bt.tick) / 10; $('#b-time').textContent = `${Math.floor(left / 60)}:${String(Math.floor(left % 60)).padStart(2, '0')}`;
+  const left = Math.max(0, ATTACK.maxTicks - b.bt.tick) / 10; $('#b-time').textContent = `⏱ ${Math.floor(left / 60)}:${String(Math.floor(left % 60)).padStart(2, '0')}`; $('#b-time').classList.toggle('low', left < 30); $('#b-bar').style.width = r.pct + '%';
 }
 world.onFrame = (dt) => {
   const b = battle; if (!b || b.done) return; b.acc += dt * b.speed; let steps = 0;
