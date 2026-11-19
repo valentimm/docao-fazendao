@@ -63,3 +63,20 @@ export const UNIT_ORDER = ['leitao', 'atirador', 'javali', 'bomba'];
 export const ATTACK = { cost: 30, maxTicks: 1800, tps: 10, ttl: 5 * 60 * 1000, lock: 5 * 60 * 1000, maxCmds: 120, perDay: 60, shieldH: [0, 4, 6, 8] };
 
 export const lvlVal = (arr, lvl) => arr[Math.max(0, Math.min(arr.length - 1, lvl - 1))];
+
+// ---------- guildas ----------
+export const GUILD = {
+  max: 3,                                   // teto duro de membros
+  cost: { planks: 200, grains: 50 },        // custo pra fundar (recurso da fazenda)
+  emblems: ['🐷', '🐗', '🌽', '🥕', '🎃', '🐔', '🐄', '🚜', '🌻', '🍎', '🐶', '🥔'],
+  colors: ['#e7708a', '#8b5a2b', '#f2b134', '#5aa83a', '#3f8fd2', '#8e5bd1'],
+  nameMin: 3, nameMax: 20, chatMax: 200, chatGapMs: 1500, requestsMax: 5,
+};
+// "Os Porcões " → "os porcoes" (nome único sem diferença de caixa/acento/espaço)
+export const guildKey = (s) => String(s || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+export function guildNameErr(name) {
+  const n = String(name || '').replace(/\s+/g, ' ').trim();
+  if (n.length < GUILD.nameMin || n.length > GUILD.nameMax) return `Nome com ${GUILD.nameMin} a ${GUILD.nameMax} letras`;
+  if (!/^[\p{L}\p{N} '._-]+$/u.test(n)) return 'Só letras, números, espaço e . _ -';
+  return '';
+}

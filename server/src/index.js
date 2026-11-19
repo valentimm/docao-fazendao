@@ -5,9 +5,10 @@
 import { newFarm, settle, act, rateOk, steal, readyPlots, baseSnapshot, lootable, lootFor, trophyDelta, celeiroLvl, addRes, hash32, dayKey } from '../../shared/economy.js';
 import { ATTACK, RES, UNITS } from '../../shared/rules.js';
 import { validateCmds, runBattle } from '../../shared/sim.js';
+import { guildmates, NOT_GUILDMATE_SQL, guildOf, createGuild, joinByCode, requestJoin, cancelRequest, answerRequest, leaveGuild, kickMember, transferLeader, postChat, donate, guildRank, guildList, guildInfo } from './guild.js';
 import { botBase, botLoot, botTrophies, botFarm, BOT_NAMES, BOT_NEIGHBORS } from '../../shared/bots.js';
 
-const VERSION = 'v1.0';
+const VERSION = 'v1.1';
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Authorization', 'Access-Control-Max-Age': '86400' };
 const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...cors } });
 const enc = new TextEncoder();
@@ -59,8 +60,11 @@ const publicFarm = (s, now, me) => ({ level: celeiroLvl(s), buildings: s.buildin
 async function neighbors(env, acct, now) {
   const day = dayKey(now), me = await ensureRow(env, acct, now), ms = settle(JSON.parse(me.state), now);
   const bots = []; for (let i = 0; i < BOT_NEIGHBORS; i++) { const f = botFarm(i, day); const ready = f.state.buildings.filter((b) => b.type === 'canteiro' && !ms.day.stolen[`${f.key}:${b.id}:${b.plantedAt}`]).length; bots.push({ who: f.key, nick: f.nick, level: f.level, ready, bot: true, sign: f.sign }); }
-  const { results } = await env.DB.prepare('SELECT account_id, nick, state, trophies FROM farm_players WHERE account_id != ? ORDER BY updated_at DESC LIMIT 12').bind(acct.id).all();
-  const players = (results || []).map((r) => { const s = settle(JSON.parse(r.state), now); const ready = s.buildings.filter((b) => b.type === 'canteiro' && b.crop && now >= b.readyAt && (b.stolenPct | 0) + 10 <= 30 && !(b.thieves || []).includes(acct.id)).length; return { who: 'p:' + r.account_id, nick: r.nick, level: celeiroLvl(s), trophies: r.trophies, ready }; });
+  const mates = await guildmates(env, acct.id);
+  const { results } = await env.DB.prepare(`SELECT account_id, nick, state, trophies FROM farm_players WHERE account_id != ?1 AND (account_id IN (SELECT account_id FROM farm_guild_members WHERE guild_id = (SELECT guild_id FROM farm_guild_members WHERE account_id = ?1))
+    OR account_id IN (SELECT account_id FROM farm_players WHERE account_id != ?1 ORDER BY updated_at DESC LIMIT 12))`).bind(acct.id).all();
+  const players = (results || []).map((r) => { const s = settle(JSON.parse(r.state), now), guild = mates.has(r.account_id); const ready = guild ? 0 : s.buildings.filter((b) => b.type === 'canteiro' && b.crop && now >= b.readyAt && (b.stolenPct | 0) + 10 <= 30 && !(b.thieves || []).includes(acct.id)).length; return { who: 'p:' + r.account_id, nick: r.nick, level: celeiroLvl(s), trophies: r.trophies, ready, guild }; })
+    .sort((a, b) => (b.guild - a.guild));
   return { players, bots, stealsLeft: Math.max(0, 20 - (ms.day.steals | 0)) };
 }
 
@@ -71,7 +75,8 @@ async function visit(env, acct, who, now) {
     return { who, nick: f.nick, sign: f.sign, bot: true, ...pub }; }
   const m = /^p:(\d+)$/.exec(who); if (!m || +m[1] === acct.id) return null;
   const row = await loadRow(env, +m[1]); if (!row) return null;
-  return { who, nick: row.nick, trophies: row.trophies, ...publicFarm(settle(JSON.parse(row.state), now), now, acct.id) };
+  const guild = (await guildmates(env, acct.id)).has(+m[1]);
+  return { who, nick: row.nick, trophies: row.trophies, guild, ...publicFarm(settle(JSON.parse(row.state), now), now, acct.id) };
 }
 
 async function doSteal(env, acct, who, plot) {
@@ -80,6 +85,7 @@ async function doSteal(env, acct, who, plot) {
     return withFarm(env, acct, (s, now) => { const f = botFarm(i, dayKey(now)); return steal(f.state, s, plot, acct.id, f.key, now, env.STEAL_SECRET || 'fz'); });
   }
   const m = /^p:(\d+)$/.exec(who); const oid = m ? +m[1] : 0; if (!oid || oid === acct.id) return { ok: false, error: 'Vizinho não encontrado' };
+  if ((await guildmates(env, acct.id)).has(oid)) return { ok: false, error: 'É da sua guilda! Colega não se rouba 🤝' };
   for (let i = 0; i < 3; i++) {
     const now = Date.now(); const meRow = await ensureRow(env, acct, now), oRow = await loadRow(env, oid); if (!oRow) return { ok: false, error: 'Vizinho não encontrado' };
     const s = settle(JSON.parse(meRow.state), now), o = settle(JSON.parse(oRow.state), now);
@@ -115,7 +121,7 @@ async function attackStart(env, acct, kind) {
     let target = null;
     if (kind === 'pvp') {
       const lo = (s.trophies | 0) - 300, hi = (s.trophies | 0) + 300;
-      const { results } = await env.DB.prepare(`SELECT account_id, nick, state, trophies FROM farm_players WHERE account_id != ?1 AND shield_until < ?2 AND lock_until < ?2 AND trophies BETWEEN ?3 AND ?4
+      const { results } = await env.DB.prepare(`SELECT account_id, nick, state, trophies FROM farm_players WHERE account_id != ?1 AND ${NOT_GUILDMATE_SQL} AND shield_until < ?2 AND lock_until < ?2 AND trophies BETWEEN ?3 AND ?4
         AND account_id NOT IN (SELECT defender FROM farm_attacks WHERE attacker = ?1 AND status = 'done' AND created_at > ?5) ORDER BY updated_at DESC LIMIT 15`).bind(acct.id, now, lo, hi, now - 24 * 3600e3).all();
       const list = results || [];
       for (let k = 0; k < list.length && !target; k++) {
@@ -214,6 +220,24 @@ export default {
       if (p === '/api/farm/attacks' && m === 'GET') {
         const { results } = await env.DB.prepare("SELECT id, target, result, created_at FROM farm_attacks WHERE attacker = ? AND status = 'done' ORDER BY created_at DESC LIMIT 10").bind(acct.id).all();
         return json({ ok: true, attacks: (results || []).map((r) => ({ id: r.id, target: r.target, at: r.created_at, ...JSON.parse(r.result || '{}') })) });
+      }
+      if (p.startsWith('/api/farm/guild')) {
+        const h = { withFarm, ensureRow, loadRow, saveStmt, rtok }, g = p.slice('/api/farm/guild'.length);
+        if (m === 'GET') {
+          if (g === '') return json({ ...(await guildInfo(env, acct, url.searchParams.get('after') | 0)), me });
+          if (g === '/rank') return json(await guildRank(env));
+          if (g === '/list') return json(await guildList(env, acct, url.searchParams.get('q') || ''));
+          return json({ error: 'Não encontrado' }, 404);
+        }
+        if (m !== 'POST') return json({ error: 'Não encontrado' }, 404);
+        const b = await readJson(req, 1024); if (!b) return json({ error: 'Pedido inválido' }, 400);
+        const t = b.account | 0;
+        const R = g === '/create' ? await createGuild(env, acct, b, h) : g === '/join' ? await joinByCode(env, acct, b.code) : g === '/request' ? await requestJoin(env, acct, b.id | 0)
+          : g === '/cancel' ? await cancelRequest(env, acct, b.id | 0) : g === '/accept' ? await answerRequest(env, acct, t, true) : g === '/reject' ? await answerRequest(env, acct, t, false)
+          : g === '/leave' ? await leaveGuild(env, acct) : g === '/kick' ? await kickMember(env, acct, t) : g === '/leader' ? await transferLeader(env, acct, t)
+          : g === '/chat' ? await postChat(env, acct, b.text) : g === '/donate' ? await donate(env, acct, b, h) : null;
+        if (!R) return json({ error: 'Não encontrado' }, 404);
+        return out(R);
       }
       if (p === '/api/farm/rank' && m === 'GET') {
         const { results } = await env.DB.prepare('SELECT nick, trophies, level FROM farm_players ORDER BY trophies DESC, updated_at DESC LIMIT 20').all();

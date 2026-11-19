@@ -1,7 +1,7 @@
 // Docão Fazendão: cliente. Login da conta Docão (Shooter), fazenda, construir, plantar/colher, treinar, roubar e atacar.
 import { World } from './scene.js';
 import { hpBar, setBar } from './scene.js';
-import { BUILDINGS, BUILD_ORDER, CROPS, UNITS, UNIT_ORDER, ATTACK, STEAL, GRID, lvlVal } from '../shared/rules.js';
+import { BUILDINGS, BUILD_ORDER, CROPS, UNITS, UNIT_ORDER, ATTACK, STEAL, GRID, lvlVal, GUILD } from '../shared/rules.js';
 import { settle, caps, housing, armySpace, celeiroLvl, countOf, maxCount, canPlace, busyCount, fmtDur } from '../shared/economy.js';
 import { Battle, deployOk } from '../shared/sim.js';
 
@@ -102,7 +102,7 @@ document.querySelectorAll('#dock button').forEach((b) => b.onclick = () => { if 
 function renderSheet(kind, soft = false) {
   const s = local(); if (!s) return; const t = now(); let h = '';
   const body = $('#sheet-body');
-  if (soft && (kind === 'neighbors' || kind === 'wall')) return;
+  if (soft && (kind === 'neighbors' || kind === 'wall' || kind === 'guild')) return;
   if (kind === 'building') {
     const b = s.buildings.find((x) => x.id === sel); if (!b) return closeSheet(); const d = BUILDINGS[b.type]; const busy = b.busyUntil > t;
     h += `<h2>${B_EMO[b.type]} ${d.name} <span class="tag">${b.lvl < 1 ? 'em obra' : 'nível ' + b.lvl}</span></h2><p class="desc">${d.desc}</p>`;
@@ -145,12 +145,13 @@ function renderSheet(kind, soft = false) {
       <div class="card2"><b>🐷 Fazenda de jogador</b><small>Alguém com medalhas parecidas e sem escudo. Se não tiver ninguém, cai num bot.</small><div class="btns"><button class="danger" ${n ? '' : 'disabled'} data-attack="pvp">Buscar jogador</button></div></div></div>
       ${n ? '' : '<p><b>Sem tropa!</b> Treine no Chiqueiro-Quartel.</p>'}<p class="desc">Ataques hoje: ${s.day.finds | 0}/${ATTACK.perDay} · ${s.shieldUntil > t ? `🛡️ escudo por ${fmtDur((s.shieldUntil - t) / 1000)} (atacar tira)` : 'sem escudo'}</p>`;
   } else if (kind === 'neighbors') { h += `<h2>🤚 Vizinhos</h2><p class="desc">Canteiro pronto e não colhido pode ser roubado: ${STEAL.pct}% por visita, no máximo ${STEAL.maxPct}%. Cuidado com o cachorro.</p><div id="nb-list">Carregando…</div>`; loadNeighbors(); }
+  else if (kind === 'guild') { h += `<div id="guild-box">Carregando…</div>`; body.innerHTML = h; loadGuild(); return; }
   else if (kind === 'wall') { h += `<h2>📜 Mural</h2><div id="wall-list">Carregando…</div>`; loadWall(); }
   body.innerHTML = h;
 }
 async function loadNeighbors() {
   const r = await api('/api/farm/neighbors'); const el = $('#nb-list'); if (!el) return; if (!r.ok) { el.textContent = r.error; return; }
-  const row = (p) => `<div class="it"><div><b>${p.bot ? '🤖' : '🐷'} ${esc(p.nick)}</b><small>Celeiro ${p.level}${p.trophies != null ? ` · 🏅 ${p.trophies}` : ''} · ${p.ready ? `🤚 ${p.ready} canteiro(s) dando sopa` : 'nada pra roubar agora'}</small></div><button ${p.ready ? 'class="ok"' : 'class="ghost"'} data-visit="${esc(p.who)}">Visitar</button></div>`;
+  const row = (p) => `<div class="it"><div><b>${p.bot ? '🤖' : p.guild ? '🤝' : '🐷'} ${esc(p.nick)}${p.guild ? ' <span class="tag">guilda</span>' : ''}</b><small>Celeiro ${p.level}${p.trophies != null ? ` · 🏅 ${p.trophies}` : ''} · ${p.guild ? 'colega de guilda (não se rouba)' : p.ready ? `🤚 ${p.ready} canteiro(s) dando sopa` : 'nada pra roubar agora'}</small></div><button ${p.ready ? 'class="ok"' : 'class="ghost"'} data-visit="${esc(p.who)}">Visitar</button></div>`;
   el.innerHTML = `<p class="desc">Roubos restantes hoje: <b>${r.stealsLeft}/${STEAL.perDay}</b></p><h3>Jogadores</h3><div class="list">${r.players.length ? r.players.map(row).join('') : '<small>Ninguém mais jogando ainda. Chama a galera!</small>'}</div><h3>Fazendas de bot</h3><div class="list">${r.bots.map(row).join('')}</div>`;
 }
 async function loadWall() {
@@ -164,7 +165,7 @@ async function loadWall() {
 }
 
 $('#sheet-body').addEventListener('click', async (e) => {
-  const t = e.target.closest('button'); if (!t || t.disabled) return; const s = local(); const b = s && s.buildings.find((x) => x.id === sel);
+  const t = e.target.closest('button'); if (!t || t.disabled || t.dataset.g) return; const s = local(); const b = s && s.buildings.find((x) => x.id === sel);
   if (t.dataset.plant) await act({ type: 'plant', id: sel, crop: t.dataset.plant }, b);
   else if ('harvest' in t.dataset) await act({ type: 'harvest', id: sel }, b);
   else if ('collect' in t.dataset) await act({ type: 'collect', id: sel }, b);
@@ -178,11 +179,93 @@ $('#sheet-body').addEventListener('click', async (e) => {
   renderSheet(sheetKind || 'building', false);
 });
 
+// ---------- guilda ----------
+let G = null, gForm = { emblem: GUILD.emblems[0], color: GUILD.colors[0] }, gSeen = +localStorage.getItem('fz_gseen') || 0, gBusy = false;
+const ago2 = (ts) => { const m = Math.floor((now() - ts) / 60000); return m < 1 ? 'agora' : m < 60 ? `${m} min` : m < 1440 ? `${Math.floor(m / 60)} h` : `${Math.floor(m / 1440)} d`; };
+const badge = (g, sm) => `<span class="g-badge ${sm ? 'sm' : ''}" style="background:${esc(g.color)}">${esc(g.emblem)}</span>`;
+async function loadGuild(full = true) {
+  const r = await api('/api/farm/guild'); const el = $('#guild-box'); if (!r.ok) { if (el) el.textContent = r.error; return; }
+  const keep = el && el.querySelector('#g-text') ? el.querySelector('#g-text').value : ''; G = r; markGuildSeen();
+  if (!el || sheetKind !== 'guild') return;
+  if (!r.guild) { if (full) renderNoGuild(el); return; }
+  if (!full && el.querySelector('#g-chat')) { el.querySelector('#g-top').innerHTML = topHtml(r.guild); el.querySelector('#g-mem').innerHTML = memHtml(r); el.querySelector('#g-req').innerHTML = reqHtml(r); fillChat(r.chat); return; }
+  const g = r.guild;
+  el.innerHTML = `<div class="g-head" id="g-top">${topHtml(g)}</div>
+    <p class="desc">Colega de guilda não se ataca nem se rouba. Dá pra visitar e doar tropa.</p>
+    <div class="g-row"><span>Código de convite:</span><span class="g-code">${esc(g.code)}</span><button class="ghost" data-g="copy">Copiar</button></div>
+    <h3>Membros</h3><div class="list" id="g-mem">${memHtml(r)}</div><div id="g-req">${reqHtml(r)}</div>
+    <h3>💬 Conversa da guilda</h3><div class="g-chat" id="g-chat"></div>
+    <form class="g-row" id="g-form" onsubmit="return false"><input id="g-text" maxlength="${GUILD.chatMax}" placeholder="Fala com a guilda…" autocomplete="off"><button class="ok" data-g="send">Enviar</button></form>
+    <h3>🏆 Ranking de guildas</h3><div class="list" id="g-rank">Carregando…</div>
+    <div class="row" style="margin-top:10px"><button class="danger" data-g="leave">Sair da guilda</button></div>`;
+  el.querySelector('#g-text').value = keep; fillChat(r.chat, true); loadGuildRank();
+}
+const topHtml = (g) => `${badge(g)}<div><h2>${esc(g.name)}</h2><small>🏅 ${n0(g.trophies)} medalhas${g.rank ? ` · #${g.rank} no ranking` : ''} · ${g.members.length}/${g.max} membros</small></div>`;
+function memHtml(r) {
+  const g = r.guild; return g.members.map((m) => `<div class="it g-mem"><div><b>${m.leader ? '👑 ' : ''}${esc(m.nick)}${m.me ? ' (você)' : ''}</b><small>🏅 ${n0(m.trophies)} · Celeiro ${m.level || 1}${m.me ? '' : ` · ${m.online ? '<i class="on"></i> mexeu agora' : `mexeu na fazenda há ${ago2(m.seen)}`}`}</small></div>
+    <div class="btns">${m.me ? '' : `<button class="ghost" data-g="visit" data-v="${esc(m.who)}">🏡 Visitar</button><button class="ghost" data-g="gift" data-v="${m.id}">🎁 Doar</button>${g.iAmLeader ? `<button class="ghost" data-g="lead" data-v="${m.id}">👑</button><button class="danger" data-g="kick" data-v="${m.id}">Expulsar</button>` : ''}`}</div></div>`).join('');
+}
+function reqHtml(r) { if (!r.requests || !r.requests.length) return ''; return `<h3>Pedidos pra entrar</h3><div class="list">${r.requests.map((q) => `<div class="it"><div><b>${esc(q.nick)}</b><small>${ago2(q.created_at)}</small></div><div class="btns"><button class="ok" data-g="accept" data-v="${q.id}">Aceitar</button><button class="ghost" data-g="reject" data-v="${q.id}">Recusar</button></div></div>`).join('')}</div>`; }
+function fillChat(list, force) {
+  const box = $('#g-chat'); if (!box) return; const atEnd = force || box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+  box.innerHTML = list.length ? list.map((c) => c.kind === 'sys' ? `<div class="g-sys">${esc(c.text)} · ${ago2(c.at)}</div>` : `<div class="g-msg ${c.me ? 'me' : ''}">${c.me ? '' : `<b>${esc(c.nick)}</b>`}${esc(c.text)} <small>${ago2(c.at)}</small></div>`).join('') : '<div class="g-sys">Ninguém falou nada ainda. Dá um oi!</div>';
+  if (atEnd) box.scrollTop = box.scrollHeight;
+}
+function renderNoGuild(el) {
+  const s = local(), cost = GUILD.cost, can = s && s.res.planks >= cost.planks && s.res.grains >= cost.grains;
+  const reqs = (G && G.requests) || [];
+  el.innerHTML = `<h2>🏰 Guilda</h2><p class="desc">Junte até <b>${GUILD.max}</b> fazendeiros: colega não ataca nem rouba colega, vocês conversam, doam tropa e somam Medalhas de Lama no ranking de guildas.</p>
+    <h3>Entrar com código</h3><form class="g-row" onsubmit="return false"><input id="g-code" maxlength="8" placeholder="Ex.: K7PQ2M" autocapitalize="characters" autocomplete="off" style="text-transform:uppercase"><button class="ok" data-g="join">Entrar</button></form>
+    ${reqs.length ? `<h3>Seus pedidos</h3><div class="list">${reqs.map((q) => `<div class="it"><div class="g-row">${badge(q, 1)}<b>${esc(q.name)}</b></div><button class="ghost" data-g="cancel" data-v="${q.id}">Cancelar</button></div>`).join('')}</div>` : ''}
+    <h3>Procurar guilda</h3><form class="g-row" onsubmit="return false"><input id="g-q" placeholder="Nome da guilda" autocomplete="off"><button class="ghost" data-g="search">🔎</button></form><div class="list" id="g-list" style="margin-top:6px">Carregando…</div>
+    <h3>Fundar guilda</h3><div class="card2"><input id="g-name" maxlength="${GUILD.nameMax}" placeholder="Nome (${GUILD.nameMin} a ${GUILD.nameMax} letras)" autocomplete="off">
+      <small>Brasão</small><div class="g-pick">${GUILD.emblems.map((e) => `<button data-g="emb" data-v="${e}" class="${e === gForm.emblem ? 'sel' : ''}">${e}</button>`).join('')}</div>
+      <small>Cor</small><div class="g-pick">${GUILD.colors.map((c) => `<button data-g="col" data-v="${c}" class="col ${c === gForm.color ? 'sel' : ''}" style="background:${c}" aria-label="cor"></button>`).join('')}</div>
+      <div class="btns"><button class="ok" ${can ? '' : 'disabled'} data-g="create">🏰 Fundar · ${n0(cost.planks)} 🪵 + ${n0(cost.grains)} 🌾</button></div></div>
+    <h3>🏆 Ranking de guildas</h3><div class="list" id="g-rank">Carregando…</div>`;
+  searchGuilds(''); loadGuildRank();
+}
+async function searchGuilds(q) {
+  const r = await api('/api/farm/guild/list?q=' + encodeURIComponent(q)); const el = $('#g-list'); if (!el) return; if (!r.ok) { el.textContent = r.error; return; }
+  el.innerHTML = r.rows.length ? r.rows.map((g) => `<div class="it"><div class="g-row">${badge(g, 1)}<div><b>${esc(g.name)}</b><small>${g.members}/${GUILD.max} · 🏅 ${n0(g.trophies)}</small></div></div>${g.asked ? '<span class="tag">pedido enviado</span>' : `<button class="ghost" data-g="request" data-v="${g.id}">Pedir pra entrar</button>`}</div>`).join('') : '<small>Nenhuma guilda com vaga. Funde a sua!</small>';
+}
+async function loadGuildRank() {
+  const r = await api('/api/farm/guild/rank'); const el = $('#g-rank'); if (!el || !r.ok) return;
+  el.innerHTML = r.rows.length ? r.rows.map((g, i) => `<div class="it"><div class="g-row"><b>${i + 1}.</b>${badge(g, 1)}<div><b>${esc(g.name)}</b><small>${g.members}/${GUILD.max} membros</small></div></div><span class="tag">🏅 ${n0(g.trophies)}</span></div>`).join('') : '<small>Nenhuma guilda ainda.</small>';
+}
+function markGuildSeen() { const last = G && G.chat && G.chat.length ? G.chat[G.chat.length - 1].id : 0; if (sheetKind === 'guild' && last > gSeen) { gSeen = last; localStorage.setItem('fz_gseen', gSeen); } $('#guild-dot').classList.toggle('hidden', !(last > gSeen)); }
+async function gAct(path, body) { if (gBusy) return; gBusy = true; try { const r = await api('/api/farm/guild/' + path, body); if (!r.ok) { toast(r.error || 'Não deu', 'bad'); return r; } absorb(r); if (r.msg) toast(r.msg, 'good'); await loadGuild(true); return r; } finally { gBusy = false; } }
+$('#sheet-body').addEventListener('click', async (e) => {
+  const t = e.target.closest('button[data-g]'); if (!t || t.disabled) return; const k = t.dataset.g, v = t.dataset.v;
+  if (k === 'emb' || k === 'col') { gForm[k === 'emb' ? 'emblem' : 'color'] = v; t.parentElement.querySelectorAll('button').forEach((b) => b.classList.toggle('sel', b === t)); }
+  else if (k === 'create') gAct('create', { name: $('#g-name').value, ...gForm });
+  else if (k === 'join') gAct('join', { code: $('#g-code').value });
+  else if (k === 'search') searchGuilds($('#g-q').value);
+  else if (k === 'request') gAct('request', { id: +v });
+  else if (k === 'cancel') gAct('cancel', { id: +v });
+  else if (k === 'accept' || k === 'reject' || k === 'kick' || k === 'lead') {
+    const m = G && G.guild && G.guild.members.find((x) => x.id === +v);
+    if (k === 'kick' || k === 'lead') return modal(`<h2>${k === 'kick' ? '🥾 Expulsar' : '👑 Passar liderança'}</h2><p>${k === 'kick' ? `Tirar <b>${esc(m && m.nick)}</b> da guilda?` : `<b>${esc(m && m.nick)}</b> vira o líder e você vira membro.`}</p><div class="row"><button class="${k === 'kick' ? 'danger' : 'ok'}" data-close data-gm="${k === 'kick' ? 'kick' : 'leader'}" data-v="${v}">Confirmar</button><button class="ghost" data-close>Voltar</button></div>`);
+    gAct(k, { account: +v });
+  }
+  else if (k === 'leave') modal(`<h2>Sair da guilda?</h2><p>${G && G.guild && G.guild.members.length === 1 ? 'Você é o último: a guilda acaba.' : G && G.guild && G.guild.iAmLeader ? 'A liderança passa pro membro mais antigo.' : 'Dá pra voltar depois com o código, se tiver vaga.'}</p><div class="row"><button class="danger" data-close data-gm="leave">Sair</button><button class="ghost" data-close>Ficar</button></div>`);
+  else if (k === 'send') { const i = $('#g-text'), text = i.value.trim(); if (!text) return; i.value = ''; const r = await api('/api/farm/guild/chat', { text }); if (!r.ok) { toast(r.error, 'bad'); i.value = text; } else loadGuild(false); i.focus(); }
+  else if (k === 'copy') { const c = G && G.guild && G.guild.code; try { await navigator.clipboard.writeText(c); toast('Código copiado: ' + c, 'good'); } catch (_) { toast('Código: ' + c); } }
+  else if (k === 'visit') startVisit(v);
+  else if (k === 'gift') { const s = local(), m = G.guild.members.find((x) => x.id === +v); const have = UNIT_ORDER.filter((u) => (s.army[u] | 0) > 0);
+    modal(`<h2>🎁 Doar tropa pro ${esc(m.nick)}</h2><p class="desc">Sai do seu acampamento e vai pro dele (até 10 por dia, se couber lá).</p><div class="grid">${have.length ? have.map((u) => `<div class="card2"><b>${UNIT_EMO[u]} ${UNITS[u].name}</b><small>você tem ${s.army[u]}</small><div class="btns"><button data-gm="donate" data-v="${v}" data-u="${u}" data-n="1">+1</button>${s.army[u] >= 3 ? `<button data-gm="donate" data-v="${v}" data-u="${u}" data-n="3">+3</button>` : ''}</div></div>`).join('') : '<p>Você não tem tropa pronta.</p>'}</div><div class="row"><button class="ghost" data-close>Fechar</button></div>`); }
+});
+$('#sheet-body').addEventListener('keydown', (e) => { if (e.key !== 'Enter') return; const id = e.target.id; if (id === 'g-text' || id === 'g-code' || id === 'g-q') { e.preventDefault(); const b = e.target.parentElement.querySelector('button[data-g]'); if (b) b.click(); } });
+$('#modal').addEventListener('click', (e) => { const t = e.target.closest('button[data-gm]'); if (!t) return; const k = t.dataset.gm;
+  if (k === 'leave') gAct('leave', {}); else if (k === 'donate') { gAct('donate', { to: +t.dataset.v, unit: t.dataset.u, n: +t.dataset.n }); $('#modal').classList.add('hidden'); } else gAct(k, { account: +t.dataset.v }); });
+// conversa por polling: 4 s com a aba aberta, 30 s fechada (só pra bolinha de mensagem nova)
+let gTick = 0; setInterval(() => { if (!token || !S) return; gTick++; if (sheetKind === 'guild' && G && G.guild && !gBusy) loadGuild(false); else if (sheetKind !== 'guild' && gTick % 8 === 0) api('/api/farm/guild').then((r) => { if (r.ok) { G = r; markGuildSeen(); } }); }, 4000);
+
 // ---------- toques no mapa ----------
 function onTap(p, e) {
   if (mode === 'battle') return deployAt(p);
   if (place) { movePlace(p); confirmPlace(); return; } // estilo CoC: o clique normal já coloca ali
-  if (mode === 'visit') { const hit = e && world.pickIcon(e.clientX, e.clientY); const b = hit ? visitFarm.buildings.find((x) => x.id === hit) : world.buildingAt(p); if (b && b.type === 'canteiro') return trySteal(b); if (b) toast(BUILDINGS[b.type].name); return; }
+  if (mode === 'visit') { const hit = e && world.pickIcon(e.clientX, e.clientY); const b = hit ? visitFarm.buildings.find((x) => x.id === hit) : world.buildingAt(p); if (b && b.type === 'canteiro') return visitFarm.guild ? toast('É da sua guilda! Colega não se rouba 🤝') : trySteal(b); if (b) toast(BUILDINGS[b.type].name); return; }
   const s = local();
   // bolha em cima do prédio tem prioridade: colhe / coleta na hora
   const hit = e && world.pickIcon(e.clientX, e.clientY);
@@ -235,9 +318,9 @@ async function startVisit(who) {
   closeSheet(); mode = 'visit'; visitFarm = r.farm; offset = r.now - Date.now(); world.clear(); world.campVisible(false); world.sync(visitFarm.buildings, now()); visitIcons();
   world.docao.visible = false; if (r.farm.sign) world.setSign(r.farm.sign); else world.setSign(`Fazenda do ${r.farm.nick}`);
   $('#dock').classList.add('hidden'); world.focus(15, 15, innerWidth < 640 ? 1.2 : 0.9);
-  banner(`🏡 Visitando <b>${esc(r.farm.nick)}</b> · toque no canteiro com 🤚 pra roubar <button class="ghost" id="v-home">🏠 Voltar</button>`); $('#v-home').onclick = goHome;
+  banner(`${r.farm.guild ? '🤝' : '🏡'} Visitando <b>${esc(r.farm.nick)}</b> · ${r.farm.guild ? 'colega de guilda' : 'toque no canteiro com 🤚 pra roubar'} <button class="ghost" id="v-home">🏠 Voltar</button>`); $('#v-home').onclick = goHome;
 }
-function visitIcons() { const t = now(); for (const b of visitFarm.buildings) world.setIcon(b.id, b.type === 'canteiro' && b.crop && t >= b.readyAt && !b.mine && b.stolenPct + STEAL.pct <= STEAL.maxPct ? '🤚' : '', '#ffe08a'); }
+function visitIcons() { const t = now(); for (const b of visitFarm.buildings) world.setIcon(b.id, !visitFarm.guild && b.type === 'canteiro' && b.crop && t >= b.readyAt && !b.mine && b.stolenPct + STEAL.pct <= STEAL.maxPct ? '🤚' : '', '#ffe08a'); }
 async function trySteal(b) {
   const fb = visitFarm.buildings.find((x) => x.id === b.id); if (!fb.crop) return toast('Canteiro vazio');
   if (now() < fb.readyAt) return toast(`Ainda não está pronto (${fmtDur((fb.readyAt - now()) / 1000)})`);
