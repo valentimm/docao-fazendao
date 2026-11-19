@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Docão Fazendão · Guerra do Chiqueiro</title>
+<meta name="description" content="Fazenda + exército do Docão: planta, rouba o milho do vizinho e ataca o chiqueiro dos amigos.">
+<meta name="theme-color" content="#7fc263">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐷</text></svg>">
+<link rel="stylesheet" href="./style.css">
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.js" } }</script>
+</head>
+<body>
+<div id="world"></div>
+
+<header id="hud" class="hidden">
+  <div class="who"><span class="avatar">🐷</span><div><b id="nick">—</b><small id="lvl">Celeiro 1</small></div></div>
+  <div class="res">
+    <span class="chip" title="Grãos"><i>🌾</i><b id="r-grains">0</b><small id="c-grains"></small></span>
+    <span class="chip" title="Ração"><i>🥣</i><b id="r-ration">0</b><small id="c-ration"></small></span>
+    <span class="chip" title="Tábuas"><i>🪵</i><b id="r-planks">0</b><small id="c-planks"></small></span>
+    <span class="chip slim" title="Medalhas de Lama"><i>🏅</i><b id="r-trophies">0</b></span>
+    <span class="chip slim" title="Docoins (conta do Shooter)"><i>🪙</i><b id="r-coins">0</b></span>
+  </div>
+</header>
+
+<div id="banner" class="hidden"></div>
+
+<nav id="dock" class="hidden">
+  <button data-open="build"><i>🏗️</i><span>Construir</span></button>
+  <button data-open="army"><i>🐷</i><span>Exército</span></button>
+  <button data-open="attack" class="hot"><i>⚔️</i><span>Atacar</span></button>
+  <button data-open="neighbors"><i>🤚</i><span>Vizinhos</span></button>
+  <button data-open="wall"><i>📜</i><span>Mural</span><em id="wall-dot" class="hidden"></em></button>
+</nav>
+
+<section id="sheet" class="hidden"><div class="grip"></div><button class="x" id="sheet-x" aria-label="Fechar">✕</button><div id="sheet-body"></div></section>
+
+<div id="battle-hud" class="hidden">
+  <div class="top"><div><b id="b-name">—</b><small id="b-sub"></small></div><div class="score"><span id="b-stars">☆☆☆</span><b id="b-pct">0%</b></div><div class="timer" id="b-time">3:00</div></div>
+  <div class="bottom"><div id="b-units"></div><div class="btns"><button id="b-speed">1×</button><button id="b-end" class="danger">Encerrar</button></div></div>
+  <div class="hint" id="b-hint">Escolha a tropa e toque no chão fora da área vermelha</div>
+</div>
+
+<div id="login" class="overlay">
+  <div class="card">
+    <div class="logo">🐷🌽</div>
+    <h1>Docão Fazendão</h1>
+    <p class="sub">Guerra do Chiqueiro</p>
+    <form id="login-form">
+      <input id="l-nick" autocomplete="username" placeholder="Apelido" maxlength="16" required>
+      <input id="l-pass" type="password" autocomplete="current-password" placeholder="Senha" maxlength="128" required>
+      <input id="l-pass2" type="password" autocomplete="new-password" placeholder="Repita a senha" class="hidden">
+      <button type="submit" id="l-go">Entrar</button>
+      <p class="err" id="l-err"></p>
+      <button type="button" class="link" id="l-toggle">Não tem conta? Criar agora</button>
+    </form>
+    <p class="note">É a <b>mesma conta do Docão Shooter</b>: entra com o mesmo apelido e senha.</p>
+  </div>
+</div>
+
+<div id="modal" class="overlay hidden"><div class="card" id="modal-body"></div></div>
+<div id="toasts"></div>
+<div id="floats"></div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

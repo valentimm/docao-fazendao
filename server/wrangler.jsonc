@@ -1,0 +1,10 @@
+{
+  // Docão Fazendão — API (REST + D1, sem Durable Objects). Deploy: `npx wrangler deploy` nesta pasta.
+  "name": "docao-fazenda-api",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  // MESMO D1 do Shooter: lê accounts/sessions (login compartilhado) e escreve só nas tabelas farm_*
+  "d1_databases": [{ "binding": "DB", "database_name": "docao-contas", "database_id": "992d49c8-9c5f-48e9-80d0-d79c595ae896", "migrations_dir": "migrations", "migrations_table": "farm_d1_migrations" }],
+  "observability": { "enabled": true }
+}

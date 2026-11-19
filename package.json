@@ -1,0 +1,10 @@
+{
+  "name": "docao-fazendao",
+  "private": true,
+  "type": "module",
+  "description": "Docão Fazendão: fazenda + exército do Docão (Colheita Feliz encontra Clash of Clans)",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "dev": "npx serve client"
+  }
+}
