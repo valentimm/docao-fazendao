@@ -187,7 +187,7 @@ export async function guildInfo(env, acct, after) {
     env.DB.prepare('SELECT account_id AS id, nick, created_at FROM farm_guild_requests WHERE guild_id = ? ORDER BY created_at').bind(g.id),
     env.DB.prepare(`SELECT COUNT(*) + 1 AS pos FROM (${SUM_SQL} GROUP BY g.id HAVING COALESCE(SUM(p.trophies), 0) > (SELECT COALESCE(SUM(p2.trophies), 0) FROM farm_guild_members m2 LEFT JOIN farm_players p2 ON p2.account_id = m2.account_id WHERE m2.guild_id = ?))`).bind(g.id),
   ]);
-  const members = (mem.results || []).map((m) => ({ id: m.id, nick: m.nick || '?', trophies: m.trophies | 0, level: m.level | 0, leader: m.id === g.leader, me: m.id === acct.id, online: now - (m.updated_at | 0) < 5 * 60e3, seen: m.updated_at | 0, who: 'p:' + m.id }));
+  const members = (mem.results || []).map((m) => ({ id: m.id, nick: m.nick || '?', trophies: m.trophies | 0, level: m.level | 0, leader: m.id === g.leader, me: m.id === acct.id, online: now - (Number(m.updated_at) || 0) < 5 * 60e3, seen: Number(m.updated_at) || 0, who: 'p:' + m.id }));
   return { ok: true, now, guild: { id: g.id, name: g.name, emblem: g.emblem, color: g.color, code: g.code, leader: g.leader, iAmLeader: g.leader === acct.id, max: GUILD.max,
     trophies: members.reduce((a, m) => a + m.trophies, 0), rank: rank.results && rank.results[0] ? rank.results[0].pos : 0, members },
     chat: (chat.results || []).reverse().map((c) => ({ id: c.id, me: c.account_id === acct.id, nick: c.nick, kind: c.kind, text: c.text, at: c.created_at })),
