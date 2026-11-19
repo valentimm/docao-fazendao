@@ -2,6 +2,7 @@
 // Só desenha: a lógica (economia e batalha) vive em /shared e não conhece a cena.
 import * as THREE from 'three';
 import { GRID, BUILDINGS, CROPS, UNITS } from '../shared/rules.js';
+import { mergeGeometries } from '../vendor/BufferGeometryUtils.js';
 import { makeBuilding, makeScaffold, makeRubble, makeCrops, makeDocao, makeUnit, makeTree, makeSign, bubble, part, mat } from './models.js';
 
 export class World {
@@ -20,6 +21,7 @@ export class World {
     this.layer = new THREE.Group(); this.scene.add(this.layer); this.meshes = new Map();
     this.fx = new THREE.Group(); this.scene.add(this.fx); this.unitMeshes = new Map(); this.projectiles = [];
     this.docao = makeDocao(0.8); this.scene.add(this.docao); this.docao.position.set(GRID / 2 - 1, 0, GRID / 2 + 3.2); this.docaoGoal = null; this.docaoWait = 0;
+    this.camp = new THREE.Group(); this.scene.add(this.camp); this.campKey = ''; this.campUnits = []; this.hidden = new Set();
     this.ghost = null; this.zoneMesh = null; this.clock = new THREE.Clock(); this.t = 0;
     this.ray = new THREE.Raycaster(); this.plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     this.setupInput(); this.resize(); window.addEventListener('resize', () => this.resize());
@@ -59,7 +61,6 @@ export class World {
       ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (down) down.moved = Math.max(down.moved, Math.hypot(e.clientX - down.x, e.clientY - down.y));
       if (pinch && ptrs.size === 2) { const [a, b] = [...ptrs.values()]; this.setZoom(pinch.z * Math.hypot(a.x - b.x, a.y - b.y) / pinch.d); return; }
-      if (this.onHover) { const p = this.worldAt(e.clientX, e.clientY); if (p) this.onHover(p); }
       if (grab && down && down.moved > 6 && !this.dragLock) { const p = this.worldAt(e.clientX, e.clientY); if (p) { this.target.x += grab.x - p.x; this.target.z += grab.z - p.z; this.clampTarget(); this.placeCamera(); } } });
     const up = (e) => { if (!ptrs.has(e.pointerId)) return; ptrs.delete(e.pointerId);
       if (ptrs.size === 0) { if (down && down.moved < 8 && performance.now() - down.t < 600) { const p = this.worldAt(e.clientX, e.clientY); if (p && this.onTap) this.onTap(p, e); } grab = null; pinch = null; down = null; } };
@@ -89,7 +90,7 @@ export class World {
           if (b.type === 'canteiro' && b.crop && mdl.userData.crops) mdl.userData.crops.add(makeCrops(b.crop, stage >= 1 ? 1 : st)); }
         g.position.set(b.x, 0, b.y); this.layer.add(g); m = { g, key, b, icon: null }; this.meshes.set(b.id, m);
       }
-      m.b = b;
+      m.b = b; m.g.visible = !this.hidden.has(b.id);
     }
     for (const [id, m] of this.meshes) if (!seen.has(id)) { this.layer.remove(m.g); this.meshes.delete(id); }
   }
@@ -98,13 +99,47 @@ export class World {
     if (m.iconKey === k) return; if (m.icon) { m.g.remove(m.icon); m.icon = null; } m.iconKey = k;
     if (emoji) { const n = BUILDINGS[m.b.type].size; m.icon = bubble(emoji, color); m.icon.position.set(n / 2, n === 2 ? 1.9 : 3.6, n / 2); m.g.add(m.icon); }
   }
+  hideBuilding(id, on) { if (on) this.hidden.add(id); else this.hidden.delete(id); const m = this.meshes.get(id); if (m) m.g.visible = !on; }
+  // bolha mais perto do clique (em pixels, área generosa) → id do prédio. Tem prioridade sobre o prédio embaixo.
+  pickIcon(cx, cy, radius = 46) {
+    let best = 0, bd = radius; const v = new THREE.Vector3();
+    for (const [id, m] of this.meshes) { if (!m.icon || !m.g.visible) continue; m.icon.getWorldPosition(v); const p = this.toScreen(v.x, v.y, v.z); const d = Math.hypot(p.x - cx, p.y - cy - 4); if (d < bd) { bd = d; best = id; } }
+    return best;
+  }
+  // ---------- tropas paradas no Acampamento de Lama (igual CoC) ----------
+  campVisible(on) { this.camp.visible = on; }
+  setCampTroops(army, buildings) {
+    const camps = buildings.filter((b) => b.type === 'acampamento' && b.lvl >= 1);
+    const key = JSON.stringify(army) + camps.map((c) => `${c.id}:${c.x},${c.y}`).join('|'); if (key === this.campKey) return; this.campKey = key;
+    for (const u of this.campUnits) this.camp.remove(u.m); this.campUnits = []; if (!camps.length) return;
+    // até 40 bonecos; se o exército for maior, cada tipo aparece na proporção
+    const total = Object.values(army).reduce((a, b) => a + (b | 0), 0), cap = 40, list = [];
+    for (const u of Object.keys(army)) { const n = total > cap ? Math.round((army[u] | 0) * cap / total) : (army[u] | 0); for (let i = 0; i < n; i++) list.push(u); }
+    list.slice(0, cap).forEach((u, i) => {
+      const c = camps[i % camps.length], n = BUILDINGS.acampamento.size, m = new THREE.Mesh(unitGeo(u), unitMat); m.castShadow = true; m.scale.setScalar(1.25);
+      const home = { x0: c.x + 0.5, z0: c.y + 0.5, x1: c.x + n - 0.5, z1: c.y + n - 0.5 };
+      const r = (k) => ((Math.sin((i + 1) * 12.9898 + k * 78.233) * 43758.5453) % 1 + 1) % 1;
+      m.position.set(home.x0 + r(1) * (home.x1 - home.x0), 0, home.z0 + r(2) * (home.z1 - home.z0)); m.rotation.y = r(3) * 6.28;
+      this.camp.add(m); this.campUnits.push({ m, home, goal: null, wait: r(4) * 3, ph: r(5) * 10, sp: UNITS[u].speed / 220 });
+    });
+  }
+  walkCamp(dt) {
+    if (!this.camp.visible) return;
+    for (const c of this.campUnits) {
+      if (!c.goal) { c.wait -= dt; c.m.position.y = 0; if (c.wait <= 0) { c.goal = new THREE.Vector3(c.home.x0 + Math.random() * (c.home.x1 - c.home.x0), 0, c.home.z0 + Math.random() * (c.home.z1 - c.home.z0)); } continue; }
+      const v = c.goal.clone().sub(c.m.position); v.y = 0; const d = v.length();
+      if (d < 0.05) { c.goal = null; c.wait = 1 + Math.random() * 4; continue; }
+      v.normalize(); const st = Math.min(d, dt * 0.9 * c.sp); c.m.position.x += v.x * st; c.m.position.z += v.z * st; c.m.rotation.y = Math.atan2(v.x, v.z);
+      c.m.position.y = Math.abs(Math.sin(this.t * 12 + c.ph)) * 0.08;
+    }
+  }
   buildingAt(p) { const tx = Math.floor(p.x), ty = Math.floor(p.z); for (const m of this.meshes.values()) { const b = m.b, n = BUILDINGS[b.type].size; if (tx >= b.x && tx < b.x + n && ty >= b.y && ty < b.y + n) return b; } return null; }
   highlight(id) { for (const [bid, m] of this.meshes) m.g.position.y = bid === id ? 0.12 : 0; this.sel = id; }
   setGhost(type, x, y, okFn) {
     if (!type) { if (this.ghost) this.scene.remove(this.ghost); this.ghost = null; return; }
     if (!this.ghost || this.ghost.userData.type !== type) { if (this.ghost) this.scene.remove(this.ghost); this.ghost = makeBuilding(type, 1); this.ghost.userData.type = type;
-      const n = BUILDINGS[type].size; this.ghost.add(this.ghostPad = new THREE.Mesh(new THREE.PlaneGeometry(n, n), new THREE.MeshBasicMaterial({ color: '#2ecc71', transparent: true, opacity: 0.45, depthWrite: false })));
-      this.ghostPad.rotation.x = -Math.PI / 2; this.ghostPad.position.set(n / 2, 0.06, n / 2); this.scene.add(this.ghost); }
+      const n = BUILDINGS[type].size; this.ghost.add(this.ghostPad = new THREE.Mesh(new THREE.PlaneGeometry(n + 0.6, n + 0.6), new THREE.MeshBasicMaterial({ color: '#2ecc71', transparent: true, opacity: 0.6, depthWrite: false })));
+      this.ghostPad.rotation.x = -Math.PI / 2; this.ghostPad.position.set(n / 2, 0.04, n / 2); this.scene.add(this.ghost); }
     this.ghost.position.set(x, 0.05, y); this.ghostPad.material.color.set(okFn ? '#2ecc71' : '#e74c3c');
   }
   // área proibida pra soltar tropa (vermelho) na batalha
@@ -143,7 +178,7 @@ export class World {
       if (p.puff) { p.m.scale.setScalar(p.s * (1 + k * 1.5)); p.m.material.opacity = 1 - k; } else { p.m.position.lerpVectors(p.from, p.to, k); p.m.position.y += Math.sin(k * Math.PI) * 0.8; }
       if (k >= 1) { this.fx.remove(p.m); this.projectiles.splice(i, 1); } }
     for (const [id, m] of this.unitMeshes) if (m.dead) { m.fade -= dt * 0.8; if (m.fade <= 0) { this.fx.remove(m.g); this.unitMeshes.delete(id); } }
-    this.walkDocao(dt);
+    this.walkDocao(dt); this.walkCamp(dt);
     this.renderer.render(this.scene, this.camera);
   }
   walkDocao(dt) {
@@ -157,6 +192,17 @@ export class World {
   }
   // posição na tela de um ponto do mundo (textos flutuantes em HTML)
   toScreen(x, y, z) { const v = new THREE.Vector3(x, y, z).project(this.camera); const r = this.renderer.domElement.getBoundingClientRect(); return { x: r.left + (v.x + 1) / 2 * r.width, y: r.top + (1 - v.y) / 2 * r.height }; }
+}
+// cada tropa vira 1 malha só (cores por vértice) → 1 draw call por porquinho
+const unitGeoCache = new Map(); const unitMat = new THREE.MeshToonMaterial({ vertexColors: true });
+function unitGeo(u) {
+  if (unitGeoCache.has(u)) return unitGeoCache.get(u);
+  const g = makeUnit(u); g.updateMatrixWorld(true); const parts = [];
+  g.traverse((o) => { if (!o.isMesh) return; let geo = o.geometry.clone(); if (geo.index) geo = geo.toNonIndexed(); geo.applyMatrix4(o.matrixWorld);
+    const c = o.material.color, n = geo.attributes.position.count, col = new Float32Array(n * 3); for (let i = 0; i < n; i++) { col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b; }
+    for (const k of Object.keys(geo.attributes)) if (k !== 'position' && k !== 'normal') geo.deleteAttribute(k);
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3)); parts.push(geo); });
+  const merged = mergeGeometries(parts); unitGeoCache.set(u, merged); return merged;
 }
 function hpBar(w) {
   const g = new THREE.Group(); const bg = new THREE.Mesh(new THREE.PlaneGeometry(w, 0.13), new THREE.MeshBasicMaterial({ color: '#2b1206', depthTest: false })); const fg = new THREE.Mesh(new THREE.PlaneGeometry(w - 0.04, 0.08), new THREE.MeshBasicMaterial({ color: '#4cd964', depthTest: false }));

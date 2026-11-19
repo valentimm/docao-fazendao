@@ -18,7 +18,7 @@ const B_EMO = { celeiro: '🏚️', canteiro: '🟫', serraria: '🪚', racao: '
 let token = localStorage.getItem('fz_token') || '';
 let S = null, ME = null, offset = 0, mode = 'home', sel = null, place = null, visitFarm = null, battle = null, sheetKind = null;
 const now = () => Date.now() + offset;
-const world = new World($('#world'), (p) => onTap(p));
+const world = new World($('#world'), (p, e) => onTap(p, e));
 world.onHover = (p) => { if (place) movePlace(p); };
 
 // ---------- API ----------
@@ -62,7 +62,7 @@ function refresh() {
   $('#nick').textContent = ME.nick; $('#lvl').textContent = `Celeiro ${celeiroLvl(s)} · 🐷 ${armySpace(s, false)}/${housing(s)}`;
   for (const r of ['grains', 'ration', 'planks']) { $('#r-' + r).textContent = n0(s.res[r]); $('#c-' + r).textContent = '/' + n0(c[r]); }
   $('#r-trophies').textContent = n0(s.trophies); $('#r-coins').textContent = n0(ME.coins);
-  if (mode === 'home') { world.sync(s.buildings, now()); icons(s); }
+  if (mode === 'home' || mode === 'place') { world.sync(s.buildings, now()); icons(s); world.setCampTroops(s.army, s.buildings); }
   if (sheetKind) renderSheet(sheetKind, true);
 }
 function icons(s) {
@@ -179,17 +179,28 @@ $('#sheet-body').addEventListener('click', async (e) => {
 });
 
 // ---------- toques no mapa ----------
-function onTap(p) {
+function onTap(p, e) {
   if (mode === 'battle') return deployAt(p);
-  if (place) { movePlace(p); return; }
-  if (mode === 'visit') { const b = world.buildingAt(p); if (b && b.type === 'canteiro') return trySteal(b); if (b) toast(BUILDINGS[b.type].name); return; }
+  if (place) { movePlace(p); confirmPlace(); return; } // estilo CoC: o clique normal já coloca ali
+  if (mode === 'visit') { const hit = e && world.pickIcon(e.clientX, e.clientY); const b = hit ? visitFarm.buildings.find((x) => x.id === hit) : world.buildingAt(p); if (b && b.type === 'canteiro') return trySteal(b); if (b) toast(BUILDINGS[b.type].name); return; }
+  const s = local();
+  // bolha em cima do prédio tem prioridade: colhe / coleta na hora
+  const hit = e && world.pickIcon(e.clientX, e.clientY);
+  if (hit) { const lb = s.buildings.find((x) => x.id === hit); if (lb && quick(lb)) return; }
   const b = world.buildingAt(p);
   if (!b) return closeSheet();
-  const s = local(); const lb = s.buildings.find((x) => x.id === b.id);
-  // atalho: colher / coletar com 1 toque quando está pronto
-  if (lb.type === 'canteiro' && lb.crop && now() >= lb.readyAt && sel !== lb.id) { act({ type: 'harvest', id: lb.id }, lb); sel = lb.id; world.highlight(lb.id); openSheet('building'); return; }
-  if (BUILDINGS[lb.type].makes && lb.store >= 10 && sel !== lb.id) { act({ type: 'collect', id: lb.id }, lb); }
+  const lb = s.buildings.find((x) => x.id === b.id);
+  if (sel !== lb.id && quick(lb, true)) return;
   sel = lb.id; world.highlight(lb.id); openSheet('building');
+}
+// 1 toque: colher canteiro pronto, coletar produção, ou abrir o plantio no canteiro vazio
+function quick(lb, viaBuilding = false) {
+  const t = now(), d = BUILDINGS[lb.type];
+  if (lb.busyUntil > t) return false;
+  if (lb.type === 'canteiro' && lb.crop && t >= lb.readyAt) { act({ type: 'harvest', id: lb.id }, lb); return true; }
+  if (d.makes && lb.store >= (viaBuilding ? 10 : 1)) { act({ type: 'collect', id: lb.id }, lb); return true; }
+  if (!viaBuilding && lb.type === 'canteiro' && !lb.crop) { sel = lb.id; world.highlight(lb.id); openSheet('building'); return true; }
+  return false;
 }
 
 // ---------- construir / mover ----------
@@ -198,25 +209,30 @@ function startPlace(type, existing = null) {
   if (existing) spot = { x: existing.x, y: existing.y };
   else for (let r = 0; r < GRID && !spot; r++) for (let dx = -r; dx <= r && !spot; dx++) for (let dy = -r; dy <= r && !spot; dy++) { const x = 15 - (n >> 1) + dx, y = 15 - (n >> 1) + dy; if (canPlace(s, type, x, y)) spot = { x, y }; }
   if (!spot) return toast('Não tem espaço livre. Mova alguma coisa.', 'bad');
-  place = { type, x: spot.x, y: spot.y, id: existing ? existing.id : 0 }; mode = 'place';
+  place = { type, x: spot.x, y: spot.y, id: existing ? existing.id : 0, busy: false }; mode = 'place';
+  if (existing) world.hideBuilding(existing.id, true);
   world.setGhost(type, place.x, place.y, canPlace(s, type, place.x, place.y, place.id));
-  banner(`${existing ? 'Movendo' : 'Construindo'} ${BUILDINGS[type].name}: toque (ou arraste o mouse) onde quer pôr <button class="ok" id="pl-ok">✔ Aqui</button><button class="ghost" id="pl-no">Cancelar</button>`);
-  $('#pl-ok').onclick = confirmPlace; $('#pl-no').onclick = endPlace;
+  banner(`${existing ? '↔️ Movendo' : '🏗️'} ${BUILDINGS[type].name}: clique/toque no lugar (verde = cabe) <button class="ghost" id="pl-no">✕ Cancelar</button>`);
+  $('#pl-no').onclick = endPlace;
   $('#dock').classList.add('hidden');
 }
-function movePlace(p) { const n = BUILDINGS[place.type].size; place.x = Math.round(p.x - n / 2); place.y = Math.round(p.z - n / 2); world.setGhost(place.type, place.x, place.y, canPlace(local(), place.type, place.x, place.y, place.id)); }
+// tile clicado → canto do prédio, sempre com o tile clicado dentro (sem arredondar pra fora)
+function anchorFor(px, pz, n) { const off = (n - 1) >> 1; return { x: Math.floor(px) - off, y: Math.floor(pz) - off }; }
+function movePlace(p) { if (place.busy) return; const n = BUILDINGS[place.type].size; const a = anchorFor(p.x, p.z, n); place.x = a.x; place.y = a.y; world.setGhost(place.type, place.x, place.y, canPlace(local(), place.type, place.x, place.y, place.id)); }
 async function confirmPlace() {
-  const p = place; if (!canPlace(local(), p.type, p.x, p.y, p.id)) return toast('Não cabe aí', 'bad');
-  const r = p.id ? await act({ type: 'move', id: p.id, x: p.x, y: p.y }) : await act({ type: 'build', building: p.type, x: p.x, y: p.y });
-  if (r.ok) endPlace();
+  const p = place; if (!p || p.busy) return; if (!canPlace(local(), p.type, p.x, p.y, p.id)) return toast('Não cabe aí (vermelho)', 'bad');
+  p.busy = true; const x = p.x, y = p.y; // trava a posição: o mouse pode andar enquanto o servidor responde
+  const r = p.id ? await act({ type: 'move', id: p.id, x, y }) : await act({ type: 'build', building: p.type, x, y });
+  p.busy = false; if (r.ok) endPlace();
 }
-function endPlace() { place = null; mode = 'home'; world.setGhost(null); banner(''); $('#dock').classList.remove('hidden'); refresh(); }
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && place) endPlace(); });
+function endPlace() { if (place && place.id) world.hideBuilding(place.id, false); place = null; mode = 'home'; world.setGhost(null); banner(''); $('#dock').classList.remove('hidden'); refresh(); }
 function banner(html) { $('#banner').innerHTML = html; $('#banner').classList.toggle('hidden', !html); }
 
 // ---------- visita e roubo ----------
 async function startVisit(who) {
   const r = await api('/api/farm/visit?who=' + encodeURIComponent(who)); if (!r.ok) return toast(r.error, 'bad');
-  closeSheet(); mode = 'visit'; visitFarm = r.farm; offset = r.now - Date.now(); world.clear(); world.sync(visitFarm.buildings, now()); visitIcons();
+  closeSheet(); mode = 'visit'; visitFarm = r.farm; offset = r.now - Date.now(); world.clear(); world.campVisible(false); world.sync(visitFarm.buildings, now()); visitIcons();
   world.docao.visible = false; if (r.farm.sign) world.setSign(r.farm.sign); else world.setSign(`Fazenda do ${r.farm.nick}`);
   $('#dock').classList.add('hidden'); world.focus(15, 15, innerWidth < 640 ? 1.2 : 0.9);
   banner(`🏡 Visitando <b>${esc(r.farm.nick)}</b> · toque no canteiro com 🤚 pra roubar <button class="ghost" id="v-home">🏠 Voltar</button>`); $('#v-home').onclick = goHome;
@@ -229,7 +245,7 @@ async function trySteal(b) {
   absorb(r); fb.mine = true; if (!r.bitten) fb.stolenPct += STEAL.pct; toast(r.msg, r.bitten ? 'bad' : 'good'); float(r.bitten ? '🐶 AU!' : `+${r.amount} 🌾`, fb); visitIcons();
 }
 function goHome() {
-  mode = 'home'; visitFarm = null; battle = null; place = null; banner(''); world.setGhost(null); world.setNoDeploy(null); world.clear(); world.docao.visible = true; world.setSign('Proibido roubar milho, Paulo');
+  mode = 'home'; visitFarm = null; battle = null; place = null; banner(''); world.setGhost(null); world.setNoDeploy(null); world.clear(); world.docao.visible = true; world.campVisible(true); world.setSign('Proibido roubar milho, Paulo');
   $('#battle-hud').classList.add('hidden'); $('#hud').classList.remove('hidden'); $('#dock').classList.remove('hidden'); world.focus(15, 15.5, innerWidth < 640 ? 1.45 : 1.3); refresh();
 }
 
@@ -237,7 +253,7 @@ function goHome() {
 async function startAttack(kind) {
   const r = await api('/api/farm/attack/start', { kind }); if (!r.ok) return toast(r.error, 'bad');
   absorb(r); closeSheet(); const a = r.attack; if (a.target.fallback) toast('Ninguém disponível agora: caiu numa fazenda de bot', '');
-  mode = 'battle'; world.clear(); world.docao.visible = false; world.setSign(a.target.bot ? 'Cuidado: cachorro bravo' : `Chiqueiro do ${a.target.name}`);
+  mode = 'battle'; world.clear(); world.campVisible(false); world.docao.visible = false; world.setSign(a.target.bot ? 'Cuidado: cachorro bravo' : `Chiqueiro do ${a.target.name}`);
   const bt = new Battle(a.base, a.army, a.seed); const fake = a.base.map((b) => ({ ...b, busyUntil: 0 }));
   battle = { a, bt, fake, dead: new Set(), cmds: [], pending: [], acc: 0, speed: 1, sel: UNIT_ORDER.find((u) => a.army[u] > 0), done: false, bars: new Map() };
   world.sync(fake, now()); world.setNoDeploy(a.base); world.focus(15, 15, innerWidth < 640 ? 1.2 : 1.15);
