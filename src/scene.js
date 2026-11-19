@@ -43,7 +43,7 @@ export class World {
   setSign(text) { this.scene.remove(this.sign); this.sign = makeSign(text); this.sign.position.set(GRID - 2.5, 0, GRID + 1.2); this.scene.add(this.sign); }
   resize() {
     const w = this.el.clientWidth || window.innerWidth, h = this.el.clientHeight || window.innerHeight; this.renderer.setSize(w, h, false);
-    const a = w / h, v = a < 1 ? this.view * 1.25 : this.view; this.camera.left = -v * a / 2; this.camera.right = v * a / 2; this.camera.top = v / 2; this.camera.bottom = -v / 2; this.camera.updateProjectionMatrix();
+    const a = w / h, v = a < 1 ? Math.max(this.view, 19 / a) : this.view; this.camera.left = -v * a / 2; this.camera.right = v * a / 2; this.camera.top = v / 2; this.camera.bottom = -v / 2; this.camera.updateProjectionMatrix();
   }
   placeCamera() { this.camera.position.copy(this.target).add(new THREE.Vector3(30, 30, 30)); this.camera.lookAt(this.target); }
   worldAt(cx, cy) {

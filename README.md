@@ -2,7 +2,7 @@
 
 Colheita Feliz encontra Clash of Clans no mundo do Docão. Cada conta tem uma fazenda: planta, coleta, constrói, treina porco e saqueia o chiqueiro dos outros (mesmo offline).
 
-- **Jogar:** https://fazenda.mvalentim.dev (ou o link `.vercel.app` do projeto `docao-fazendao`)
+- **Jogar:** https://docao-fazendao.valentimm.workers.dev (domínio `fazenda.mvalentim.dev` depende do projeto na Vercel + CNAME, ver Deploy)
 - **Conta:** a mesma do Docão Shooter (apelido + senha). Quem não tem cria na tela de entrada.
 
 ## Como funciona
@@ -31,4 +31,5 @@ node test/api-smoke.mjs <API> <TOKEN_A> [TOKEN_B]   # fumaça ponta a ponta (loc
 
 - Worker: `cd server && npx wrangler deploy` (ou o dry-run + `make-deploy.mjs` com a API da Cloudflare).
 - Migration: `server/migrations/0001_fazenda.sql` (só `CREATE TABLE IF NOT EXISTS farm_*`).
-- Cliente: Vercel, site estático (raiz do repo).
+- Cliente (hoje): Worker `docao-fazendao` com o `dist/` embutido: `npm run build && node make-site-worker.mjs` e sobe o `/tmp/deploy-site.js` pela API da Cloudflare.
+- Cliente (Vercel, quando o projeto existir): importar o repo na Vercel; o `vercel.json` já roda `npm run build` e publica `dist/`. Domínio `fazenda.mvalentim.dev` = CNAME `fazenda` → `cname.vercel-dns.com` no DNS do mvalentim.dev.

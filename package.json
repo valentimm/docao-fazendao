@@ -5,6 +5,10 @@
   "description": "Docão Fazendão: fazenda + exército do Docão (Colheita Feliz encontra Clash of Clans)",
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "dev": "npx serve client"
+    "dev": "npx serve client",
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }

@@ -218,7 +218,7 @@ async function startVisit(who) {
   const r = await api('/api/farm/visit?who=' + encodeURIComponent(who)); if (!r.ok) return toast(r.error, 'bad');
   closeSheet(); mode = 'visit'; visitFarm = r.farm; offset = r.now - Date.now(); world.clear(); world.sync(visitFarm.buildings, now()); visitIcons();
   world.docao.visible = false; if (r.farm.sign) world.setSign(r.farm.sign); else world.setSign(`Fazenda do ${r.farm.nick}`);
-  $('#dock').classList.add('hidden'); world.focus(15, 15, 0.9);
+  $('#dock').classList.add('hidden'); world.focus(15, 15, innerWidth < 640 ? 1.2 : 0.9);
   banner(`🏡 Visitando <b>${esc(r.farm.nick)}</b> · toque no canteiro com 🤚 pra roubar <button class="ghost" id="v-home">🏠 Voltar</button>`); $('#v-home').onclick = goHome;
 }
 function visitIcons() { const t = now(); for (const b of visitFarm.buildings) world.setIcon(b.id, b.type === 'canteiro' && b.crop && t >= b.readyAt && !b.mine && b.stolenPct + STEAL.pct <= STEAL.maxPct ? '🤚' : '', '#ffe08a'); }
@@ -230,7 +230,7 @@ async function trySteal(b) {
 }
 function goHome() {
   mode = 'home'; visitFarm = null; battle = null; place = null; banner(''); world.setGhost(null); world.setNoDeploy(null); world.clear(); world.docao.visible = true; world.setSign('Proibido roubar milho, Paulo');
-  $('#battle-hud').classList.add('hidden'); $('#hud').classList.remove('hidden'); $('#dock').classList.remove('hidden'); world.focus(15, 15.5, innerWidth < 640 ? 1.0 : 1.3); refresh();
+  $('#battle-hud').classList.add('hidden'); $('#hud').classList.remove('hidden'); $('#dock').classList.remove('hidden'); world.focus(15, 15.5, innerWidth < 640 ? 1.45 : 1.3); refresh();
 }
 
 // ---------- batalha ----------
@@ -240,7 +240,7 @@ async function startAttack(kind) {
   mode = 'battle'; world.clear(); world.docao.visible = false; world.setSign(a.target.bot ? 'Cuidado: cachorro bravo' : `Chiqueiro do ${a.target.name}`);
   const bt = new Battle(a.base, a.army, a.seed); const fake = a.base.map((b) => ({ ...b, busyUntil: 0 }));
   battle = { a, bt, fake, dead: new Set(), cmds: [], pending: [], acc: 0, speed: 1, sel: UNIT_ORDER.find((u) => a.army[u] > 0), done: false, bars: new Map() };
-  world.sync(fake, now()); world.setNoDeploy(a.base); world.focus(15, 15, innerWidth < 640 ? 0.95 : 1.15);
+  world.sync(fake, now()); world.setNoDeploy(a.base); world.focus(15, 15, innerWidth < 640 ? 1.2 : 1.15);
   $('#hud').classList.add('hidden'); $('#dock').classList.add('hidden'); $('#battle-hud').classList.remove('hidden'); $('#b-hint').classList.remove('hidden');
   $('#b-name').textContent = (a.target.bot ? '🤖 ' : '🐷 ') + a.target.name; $('#b-sub').textContent = `Celeiro ${a.target.level} · saque até ${n0(a.loot.grains)}🌾 ${n0(a.loot.ration)}🥣 ${n0(a.loot.planks)}🪵`;
   $('#b-speed').textContent = '1×'; battleUnits(); battleHud();
